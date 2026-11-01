@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>虚拟商品商城</title>
+<style>
+body{font-family:-apple-system,sans-serif;margin:0;background:#f5f6f8;color:#222}
+header{background:#111827;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center}
+header a{color:#fff;text-decoration:none;margin-right:12px;font-size:14px}
+main{max-width:700px;margin:14px auto;padding:0 12px}
+.card{background:#fff;border-radius:10px;padding:16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.price{color:#e11d48;font-size:20px;font-weight:700}
+.muted{color:#6b7280;font-size:13px}
+input,textarea{width:100%;padding:8px;margin:4px 0 10px;border:1px solid #ccc;border-radius:6px;box-sizing:border-box;font-size:14px}
+button,.btn{background:#2563eb;color:#fff;border:0;border-radius:6px;padding:8px 14px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block}
+button:hover,.btn:hover{background:#1d4ed8}
+button.gray{background:#6b7280}
+.linkbtn{background:transparent;color:#d1d5db;padding:0;font-size:13px}
+code{background:#f3f4f6;padding:2px 4px;border-radius:3px;font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{border-bottom:1px solid #eee;padding:6px;text-align:left}
+.err{color:#dc2626;font-size:13px;margin:6px 0}
+.flash{background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:13px}
+.ok{color:#059669}
+.loading{text-align:center;padding:40px;color:#6b7280}
+</style>
+</head>
+<body>
+<header>
+  <div><a href="#/">商城</a><a href="#admin">后台</a></div>
+  <div id="ub" style="font-size:13px;color:#d1d5db"></div>
+</header>
+<main id="app"><div class="loading">加载中...</div></main>
+<script>
+const SUPABASE_URL = 'https://rruvmogqyfmwnkfignmm.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_WT36bLewDV_jWUJ5s6vAIw_WktGkWcQ';
+const ADMIN_PASSWORD = 'admin123';
+
+async function sb(path, opts = {}) {
+  const res = await fetch(SUPABASE_URL + '/rest/v1/' + path, {
+    method: opts.method || 'GET',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    },
+    body: opts.body ? JSON.stringify(opts.body) : undefined
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text);
+  return text ? JSON.parse(text) : null;
+}
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function money(f) { return (Number(f) / 100).toFixed(2); }
+function newOrderNo() { return 'V' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 4).toUpperCase(); }
+
+const app = document.getElementById('app');
+const ub = document.getElementById('ub');
+let adminLogged = false;
+
+function isAdmin() { return adminLogged || sessionStorage.getItem('adm') === '1'; }
+function setAdmin() { adminLogged = true; try { sessionStorage.setItem('adm', '1'); } catch(e) {} }
+function clearAdmin() { adminLogged = false; try { sessionStorage.removeItem('adm'); } catch(e) {} }
+
+function route() {
+  const h = (location.hash || '').replace(/^#/, '');
+  return h.split('/').filter(Boolean);
+}
+
+async function render() {
+  const parts = route();
+  const p = parts[0] || '';
+  const arg = parts[1] || '';
+  try {
+    if (p === 'admin') app.innerHTML = isAdmin() ? await viewAdmin() : viewAdminLogin();
+    else if (p === 'order' && arg) app.innerHTML = await viewOrder(arg);
+    else if (p === 'product' && arg) app.innerHTML = await viewProduct(arg);
+    else app.innerHTML = await viewHome();
+  } catch (e) {
+    app.innerHTML = '<div class="card"><h2>出错了</h2><p class="err">' + esc(e.message) + '</p><p class="muted">请检查 SUPABASE_URL 和 SUPABASE_ANON_KEY 是否填对。</p></div>';
+  }
+  ub.innerHTML = isAdmin() ? '<button class="linkbtn" data-action="admin-logout">退出后台</button>' : '';
+}
+
+async function viewHome() {
+  const products = await sb('products?select=*&active=eq.true&order=id.desc');
+  const cards = products.map(p => `
+    <div class="card">
+      <h3>${esc(p.title)}</h3>
+      <p class="muted">${esc(p.description || '')}</p>
+      <p class="price">¥${money(p.price)}</p>
+      <a class="btn" href="#/product/${p.id}">查看</a>
+    </div>
+  `).join('');
+  return `<div class="card"><h2>虚拟商品商城</h2><p class="muted">网盘链接自动发货 · 模拟支付</p></div>${cards || '<div class="card">暂无商品，请到后台添加。</div>'}`;
+}
+
+async function viewProduct(id) {
+  const rows = await sb('products?select=*&id=eq.' + encodeURIComponent(id));
+  if (!rows || !rows.length) return '<div class="card"><h2>商品不存在</h2><a class="btn" href="#/">返回</a></div>';
+  const p = rows[0];
+  return `
+    <div class="card">
+      <h2>${esc(p.title)}</h2>
+      <p>${esc(p.description || '')}</p>
+      <p class="price">¥${money(p.price)}</p>
+      <hr>
+      <form data-form="buy">
+        <input type="hidden" name="productId" value="${p.id}">
+        <label>你的名字/昵称</label>
+        <input name="buyerName" required placeholder="方便我确认是你">
+        <label>联系方式（微信/邮箱，方便售后）</label>
+        <input name="buyerContact" required placeholder="用于售后联系">
+        <div class="err" data-err></div>
+        <button type="submit">提交订单</button>
+      </form>
+      <p class="muted">提交后进入订单页，点模拟支付即可看到网盘链接。</p>
+    </div>
+  `;
+}
+
+async function viewOrder(orderNo) {
+  const rows = await sb('orders?select=*&order_no=eq.' + encodeURIComponent(orderNo));
+  if (!rows || !rows.length) return '<div class="card"><h2>订单不存在</h2><a class="btn" href="#/">返回</a></div>';
+  const o = rows[0];
+  const body = o.status === 'PAID'
+    ? `<p>网盘链接：<a href="${esc(o.delivery_url)}" target="_blank" rel="noreferrer">${esc(o.delivery_url)}</a></p><p>提取码/备注：${esc(o.delivery_note || '无')}</p>`
+    : `<button data-action="pay" data-no="${esc(o.order_no)}">模拟支付 ¥${money(o.price)}</button><p class="muted">点击后显示网盘链接。</p>`;
+  return `
+    <div class="card">
+      <h2>订单详情</h2>
+      <p>订单号：<code>${esc(o.order_no)}</code></p>
+      <p>商品：${esc(o.product_title)}</p>
+      <p>金额：<span class="price">¥${money(o.price)}</span></p>
+      <p>下单人：${esc(o.buyer_name)}</p>
+      <p>状态：${o.status === 'PAID' ? '<b class="ok">已支付</b>' : '待支付'}</p>
+      <hr>
+      ${body}
+    </div>
+    <div class="card"><a class="btn gray" href="#/">返回商城</a></div>
+  `;
+}
+
+function viewAdminLogin() {
+  return `
+    <div class="card">
+      <h2>后台登录</h2>
+      <form data-form="admin-login">
+        <label>管理密码</label>
+        <input name="password" type="password" required>
+        <div class="err" data-err></div>
+        <button type="submit">进入后台</button>
+      </form>
+      <p class="muted">默认密码：<code>admin123</code></p>
+    </div>
+  `;
+}
+
+async function viewAdmin() {
+  const products = await sb('products?select=*&order=id.desc');
+  const orders = await sb('orders?select=*&order=id.desc&limit=100');
+  const prodRows = products.map(p => `<tr><td>${esc(p.title)}</td><td>¥${money(p.price)}</td><td>${esc(p.delivery_url)}</td></tr>`).join('');
+  const orderRows = orders.map(o => `<tr><td><code>${esc(o.order_no)}</code></td><td>${esc(o.product_title)}</td><td>¥${money(o.price)}</td><td>${esc(o.buyer_name)}</td><td>${esc(o.buyer_contact)}</td><td>${o.status === 'PAID' ? '<b class="ok">已支付</b>' : '待支付'}</td></tr>`).join('');
+  return `
+    <div class="card"><h2>管理后台</h2><p class="muted">用户下单后，这里会显示。下拉刷新即可看到。</p></div>
+    <div class="card">
+      <h3>新增商品</h3>
+      <form data-form="add-product">
+        <label>标题</label><input name="title" required>
+        <label>描述</label><textarea name="description"></textarea>
+        <label>价格（元）</label><input name="priceYuan" type="number" step="0.01" min="0" required>
+        <label>网盘链接</label><input name="deliveryUrl" required placeholder="https://pan.baidu.com/s/...">
+        <label>提取码/备注</label><input name="deliveryNote" placeholder="提取码：1234">
+        <div class="err" data-err></div>
+        <button type="submit">新增商品</button>
+      </form>
+    </div>
+    <div class="card">
+      <h3>商品列表</h3>
+      <table><tr><th>标题</th><th>价格</th><th>网盘链接</th></tr>${prodRows || '<tr><td colspan="3">暂无</td></tr>'}</table>
+    </div>
+    <div class="card">
+      <h3>全部订单（下拉刷新）</h3>
+      <table><tr><th>订单号</th><th>商品</th><th>金额</th><th>下单人</th><th>联系</th><th>状态</th></tr>${orderRows || '<tr><td colspan="6">暂无订单</td></tr>'}</table>
+    </div>
+  `;
+}
+
+document.addEventListener('click', async (e) => {
+  const t = e.target.closest ? e.target.closest('[data-action]') : null;
+  if (!t) return;
+  const action = t.getAttribute('data-action');
+  if (action === 'admin-logout') { clearAdmin(); location.hash = '#/'; render(); }
+  if (action === 'pay') {
+    const no = t.getAttribute('data-no');
+    t.disabled = true;
+    t.textContent = '支付中...';
+    try {
+      const rows = await sb('orders?select=*&order_no=eq.' + encodeURIComponent(no));
+      if (!rows || !rows.length) throw new Error('订单不存在');
+      const o = rows[0];
+      if (o.status === 'PAID') { render(); return; }
+      const prows = await sb('products?select=*&id=eq.' + o.product_id);
+      if (!prows || !prows.length) throw new Error('商品不存在');
+      const p = prows[0];
+      await sb('orders?order_no=eq.' + encodeURIComponent(no), {
+        method: 'PATCH',
+        body: { status: 'PAID', delivery_url: p.delivery_url, delivery_note: p.delivery_note, paid_at: new Date().toISOString() }
+      });
+      render();
+    } catch (err) {
+      alert('支付失败：' + err.message);
+      t.disabled = false;
+      t.textContent = '模拟支付';
+    }
+  }
+});
+
+document.addEventListener('submit', async (e) => {
+  const f = e.target;
+  if (!f || !f.getAttribute) return;
+  const name = f.getAttribute('data-form');
+  if (!name) return;
+  e.preventDefault();
+  const errEl = f.querySelector('[data-err]');
+  const E = (m) => { if (errEl) errEl.textContent = m; };
+
+  if (name === 'buy') {
+    const productId = f.productId.value;
+    const buyerName = f.buyerName.value.trim();
+    const buyerContact = f.buyerContact.value.trim();
+    if (!buyerName) return E('请填写名字');
+    if (!buyerContact) return E('请填写联系方式');
+    try {
+      const prows = await sb('products?select=*&id=eq.' + encodeURIComponent(productId));
+      if (!prows || !prows.length) return E('商品不存在');
+      const p = prows[0];
+      const orderNo = newOrderNo();
+      await sb('orders', {
+        method: 'POST',
+        body: { order_no: orderNo, product_id: p.id, product_title: p.title, price: p.price, buyer_name: buyerName, buyer_contact: buyerContact, status: 'PENDING' }
+      });
+      location.hash = '#/order/' + orderNo;
+      render();
+    } catch (err) { E('提交失败：' + err.message); }
+  }
+
+  if (name === 'admin-login') {
+    if (f.password.value !== ADMIN_PASSWORD) return E('密码错误');
+    setAdmin(); render();
+  }
+
+  if (name === 'add-product') {
+    const title = f.title.value.trim();
+    const description = f.description.value.trim();
+    const priceYuan = Number(f.priceYuan.value);
+    const deliveryUrl = f.deliveryUrl.value.trim();
+    const deliveryNote = f.deliveryNote.value.trim();
+    if (!title) return E('请填写标题');
+    if (!deliveryUrl) return E('请填写网盘链接');
+    if (!isFinite(priceYuan) || priceYuan < 0) return E('价格不正确');
+    try {
+      await sb('products', {
+        method: 'POST',
+        body: { title, description, price: Math.round(priceYuan * 100), delivery_url: deliveryUrl, delivery_note: deliveryNote, active: true }
+      });
+      f.reset(); render();
+    } catch (err) { E('新增失败：' + err.message); }
+  }
+});
+
+window.addEventListener('hashchange', render);
+render();
+</script>
+</body>
+</html>
